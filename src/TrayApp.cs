@@ -62,6 +62,7 @@ namespace DjiRtmpObs
         private readonly long[] _prevBytes = new long[CamCount];
         private bool _polled;
         private bool _fwMissing;
+        private bool _svcUp;
 
         private readonly NotifyIcon _tray;
         private readonly Timer _timer;
@@ -365,7 +366,14 @@ namespace DjiRtmpObs
 
         private void OnToggle()
         {
-            if (MtxRunning) StopMtx(); else StartMtx();
+            if (MtxRunning) { StopMtx(); return; }
+            if (_svcUp)
+            {
+                // 服务在跑但不是本实例拉起的（孤儿进程）：收编前先清掉
+                try { foreach (var p in Process.GetProcessesByName("mediamtx")) { try { p.Kill(); } catch { } } } catch { }
+                System.Threading.Thread.Sleep(500);
+            }
+            StartMtx();
         }
 
         private void StartMtx()
@@ -429,11 +437,7 @@ namespace DjiRtmpObs
 
         private void RefreshStatus()
         {
-            if (_mtx != null && _mtx.HasExited)
-            {
-                _mtx = null;
-                if (File.Exists(MtxExe)) _btnToggle.Text = "启动 MediaMTX";
-            }
+            if (_mtx != null && _mtx.HasExited) _mtx = null;
             try
             {
                 var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:9997/v3/paths/list");
@@ -475,8 +479,12 @@ namespace DjiRtmpObs
         private void RenderStatus(string body)
         {
             bool svcUp = body != null;
+            _svcUp = svcUp;
             _lblSvc.Text = svcUp ? "服务状态：运行中" : "服务状态：未运行";
             _lblSvc.ForeColor = svcUp ? Green : Red;
+            // 按钮三态：自己拉起的→停止；别人拉起的（孤儿）→重启（收编）；没跑→启动
+            if (MtxRunning) _btnToggle.Text = "停止 MediaMTX";
+            else _btnToggle.Text = _svcUp ? "重启 MediaMTX" : "启动 MediaMTX";
 
             var names = svcUp ? PathNames(body) : new List<string>();
             int firstObsMissing = -1, firstInterrupted = -1;

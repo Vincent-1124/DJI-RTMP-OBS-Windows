@@ -22,4 +22,6 @@ rtmp: yes
 rtmpAddress: :1935
 
 # 注意：未启用鉴权，仅适用于可信局域网。
-# paths 缺省配置即允许任意路径发布/读取（如 live/camera1）。
+# v1.21 必须显式声明 paths，缺省=不允许任何路径推流（报 path not configured）。
+paths:
+  all_others:

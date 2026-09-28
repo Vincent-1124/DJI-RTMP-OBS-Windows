@@ -14,11 +14,16 @@
 
 ## 快速开始
 
-1. **编译**：双击 `scripts/build.bat` → 生成 `TrayApp.exe`（用 Windows 自带的 .NET 4.8 编译器，无需安装任何开发环境）
-2. **安装**：右键以管理员身份运行 `scripts/install.ps1`（自动下载 MediaMTX、校验 SHA-256、添加防火墙规则；网络不佳时先开代理/加速器）
-3. **启动**：双击 `TrayApp.exe` → 托盘图标 → 「启动 MediaMTX」→ 点击推流地址自动复制
-4. **相机**：DJI Mimo 连接相机 → 直播 → RTMP → 粘贴推流地址 → 选与电脑同一 5GHz Wi-Fi → 开始直播
-5. **OBS**：添加「媒体源」→ 输入 `rtsp://127.0.0.1:9554/live/camera1` → 勾选「断开时重新连接」→ 「输入格式」留空
+**首次（只做一次）**：
+1. 双击 `scripts/build.bat` → 生成 `TrayApp.exe`（用 Windows 自带的 .NET 4.8 编译器，无需安装任何开发环境）
+2. 双击 `TrayApp.exe` → 点「下载并安装 MediaMTX」→ 自动下载、SHA-256 校验、解压、添加防火墙规则（期间会弹一次 UAC 授权，点"是"）→ 服务自动启动
+
+**以后每次直播（双击即用）**：
+1. 双击 `TrayApp.exe`（服务自动启动，窗口可最小化到托盘）
+2. **相机**：DJI Mimo 连接相机 → 直播 → RTMP → 粘贴窗口里的推流地址（点"复制"）→ 选与电脑同一 5GHz Wi-Fi → 开始直播
+3. **OBS**：添加「媒体源」→ 输入 `rtsp://127.0.0.1:9554/live/camera1` → 勾选「断开时重新连接」→ 「输入格式」留空
+
+窗口里"流状态"显示 **● 直播中** 即表示相机画面已到达电脑。
 
 ## 常见坑
 
@@ -30,9 +35,9 @@
 ## 目录结构
 
 ```
-config/mediamtx.yml   精简配置（只开 RTMP/RTSP/API，关闭 HLS/WebRTC/metrics）
-scripts/              install.ps1（下载+防火墙）与 build.bat（编译）
-src/TrayApp.cs        托盘工具源码（.NET Framework 4.8）
+config/mediamtx.yml   精简配置（只开 RTMP/RTSP/API，关闭 HLS/WebRTC/SRT/MoQ/metrics）
+scripts/build.bat     编译脚本（.NET Framework 4.8 / x64）
+src/TrayApp.cs        应用源码（GUI + 一键安装 + 服务管理 + 托盘）
 ```
 
 ## 致谢

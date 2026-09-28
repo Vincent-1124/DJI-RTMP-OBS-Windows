@@ -1,16 +1,18 @@
 # DJI-RTMP-OBS-Windows
 
-把 DJI 运动相机（Osmo Action 6 / Action 5 Pro 等）的画面通过局域网 **RTMP 无线推流**到 Windows 电脑，交给 OBS 当一个机位。macOS 版 [renqix/DJI-RTMP-OBS](https://github.com/renqix/DJI-RTMP-OBS) 的 Windows 实现。
+把 DJI 运动相机（Osmo Action 6 / Action 5 Pro 等）的画面通过局域网 **RTMP 无线推流**到 Windows 电脑，交给 OBS 当一个机位（最多 3 路）。macOS 版 [renqix/DJI-RTMP-OBS](https://github.com/renqix/DJI-RTMP-OBS) 的 Windows 实现。
+
+**环境要求**：Windows 10 / 11（自带 .NET Framework 4.8），无需安装任何运行库或开发环境。
 
 ## 原理
 
 ```
-相机(H.265 RTMP 推流) → 局域网 → 本机 MediaMTX(1935) → 转 RTSP(9554) → OBS「媒体源」
+相机(RTMP 推流) → 局域网 → 本机 MediaMTX(1935) → 转 RTSP(9554) → OBS「媒体源」
 ```
 
-> RTSP 端口用 **9554** 而不是常见的 8554：Windows 的 Hyper-V/WSL 保留端口段经常覆盖 8475–8574，会导致绑定失败（WSAEACCES）。
-
-**为什么必须中转**：DJI 设备默认推 H.265，OBS 的 RTMP 输入不认，表现是"有声音、黑屏"；走 RTSP 才能正常解码。推流地址（rtmp://）和接收地址（rtsp://）**不能混用**。
+- 端口：`1935` 相机推流进、`9554` OBS 拉流出、`9997` 状态查询（仅本机）；防火墙只需放行前两个。
+- RTSP 用 **9554** 而不是常见的 8554：Windows 的 Hyper-V/WSL 保留端口段经常覆盖 8475–8574，会导致绑定失败（WSAEACCES）。
+- **为什么必须中转**：DJI 设备可能推 H.265，OBS 的 RTMP 输入不认，表现是"有声音、黑屏"；走 RTSP 才能正常解码。推流地址（rtmp://）和接收地址（rtsp://）**不能混用**。
 
 ## 快速开始
 
@@ -31,6 +33,26 @@
 
 注意 Wi-Fi 总带宽：3 台 1080P 同时推流约 18 Mbps，建议路由器和相机都用 5GHz；卡顿就把码率降到 720P。
 
+## 自动诊断
+
+主窗口每 3 秒查询一次本机服务状态，异常时诊断面板自动变色并直接给出解决办法：
+
+| 面板提示 | 含义与处理 |
+|---|---|
+| 红 · 路径不匹配 | 相机推流的路径名与机位不符（例如 Mimo 地址末尾多了句点），按提示修正地址；也可临时把 OBS 地址改成日志中的实际路径先验证 |
+| 黄 · 相机已推流但 OBS 未拉 | 检查 OBS 媒体源地址是否正确、`输入格式` 是否留空 |
+| 黄 · 推流中断 | 相机掉线，等待自动重连（OBS 会自行恢复） |
+| 黄 · 防火墙规则缺失 | 点击面板一键修复（弹一次授权） |
+| 绿 · 直播中 · x.x Mbps | 一切正常，并显示实时接收码率 |
+
+窗口内还有「打开日志」按钮，直接查看 `mediamtx.log`。
+
+## 分发
+
+编译产物 `DJI-RTMP-OBS.exe` 是**单文件绿色程序**，可直接发给队友（微信 / U 盘均可）：对方双击 → 安装向导自动下载并配置 → 直接用。目标电脑不需要本仓库，也不需要安装任何东西。
+
+`build.bat` 只在**修改源码后重新编译**时才需要。
+
 ## 常见坑
 
 - **相机填 `rtmp://`，OBS 填 `rtsp://`**，两个地址不要混用
@@ -41,9 +63,9 @@
 ## 目录结构
 
 ```
-config/mediamtx.yml   精简配置（只开 RTMP/RTSP/API，关闭 HLS/WebRTC/SRT/MoQ/metrics）
-scripts/build.bat     编译脚本（.NET Framework 4.8 / x64）
-src/TrayApp.cs        应用源码（GUI + 一键安装 + 服务管理 + 托盘）
+config/mediamtx.yml   精简配置（只开 RTMP/RTSP/API，关闭 HLS/WebRTC/SRT/MoQ/metrics；已内嵌进 exe）
+scripts/build.bat     编译脚本（.NET Framework 4.8 / x64，编译后自动启动）
+src/TrayApp.cs        应用源码（GUI + 安装向导 + 多机位 + 自动诊断 + 托盘）
 ```
 
 ## 致谢

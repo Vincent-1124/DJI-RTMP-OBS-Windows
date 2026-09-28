@@ -1,9 +1,10 @@
-// DJI-RTMP-OBS-Windows — 成品单文件应用
+// DJI-RTMP-OBS-Windows — 成品单文件应用（多机位 + 自动诊断）
 // 首次运行：安装向导（欢迎 → 下载安装 MediaMTX → 完成指引）。
 // 之后运行：直接进主窗口，自动启动服务；可最小化到托盘。
 // 单 exe 独立分发：mediamtx.yml 已内嵌为资源，首次运行自动释放到 config/。
 // 依赖：.NET Framework 4.8（Windows 10/11 自带），编译见 scripts/build.bat。
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -12,6 +13,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace DjiRtmpObs
@@ -29,18 +31,38 @@ namespace DjiRtmpObs
 
     internal sealed class AppForm : Form
     {
-        private const string StreamPath = "live/camera1";
+        private const int CamCount = 3;
         private const string MtxVersion = "v1.21.1";
         private const string ZipName = "mediamtx_" + MtxVersion + "_windows_amd64.zip";
         private const string DownloadBase = "https://github.com/bluenviron/mediamtx/releases/download/" + MtxVersion + "/";
         private const string FirewallRule = "DJI-RTMP-OBS MediaMTX";
 
+        private static readonly Color GreenBg = Color.FromArgb(0xE1, 0xF5, 0xEE);
+        private static readonly Color GreenFg = Color.FromArgb(0x04, 0x34, 0x2C);
+        private static readonly Color YellowBg = Color.FromArgb(0xFA, 0xEE, 0xDA);
+        private static readonly Color YellowFg = Color.FromArgb(0x63, 0x38, 0x06);
+        private static readonly Color RedBg = Color.FromArgb(0xFC, 0xEB, 0xEB);
+        private static readonly Color RedFg = Color.FromArgb(0x79, 0x1F, 0x1F);
+        private static readonly Color GrayBg = Color.FromArgb(0xF1, 0xEF, 0xE8);
+        private static readonly Color GrayFg = Color.FromArgb(0x44, 0x44, 0x41);
+        private static readonly Color Green = Color.FromArgb(0x0F, 0x6E, 0x56);
+        private static readonly Color Orange = Color.FromArgb(0xBA, 0x75, 0x17);
+        private static readonly Color Red = Color.FromArgb(0xA3, 0x2D, 0x2D);
+
         private readonly string _root = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-        private readonly TextBox _txtPush = new TextBox();
-        private readonly TextBox _txtPull = new TextBox();
         private readonly Label _lblSvc = new Label();
-        private readonly Label _lblStream = new Label();
         private readonly Button _btnToggle = new Button();
+        private readonly Panel _pnlDiag = new Panel();
+        private readonly Label _lblDiag = new Label();
+        private readonly ToolTip _tip = new ToolTip();
+        private readonly Label[] _camStat = new Label[CamCount];
+        private readonly TextBox[] _camPush = new TextBox[CamCount];
+        private readonly bool[] _everPublished = new bool[CamCount];
+        private readonly bool[] _prevLive = new bool[CamCount];
+        private readonly long[] _prevBytes = new long[CamCount];
+        private bool _polled;
+        private bool _fwMissing;
+
         private readonly NotifyIcon _tray;
         private readonly Timer _timer;
 
@@ -70,7 +92,7 @@ namespace DjiRtmpObs
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
-            ClientSize = new Size(520, 300);
+            ClientSize = new Size(520, 372);
             Font = new Font("Microsoft YaHei UI", 9F);
 
             EnsureConfig();
@@ -97,28 +119,68 @@ namespace DjiRtmpObs
 
         private void BuildMainUi()
         {
-            Controls.Add(MkLabel("推流地址（填进 DJI Mimo）：", 16, 16));
-            SetupBox(_txtPush, 16, 40);
-            Controls.Add(_txtPush);
-            Controls.Add(MkButton("复制", 394, 39, delegate { Copy(PushUrl()); }));
+            var hint = new Label();
+            hint.Text = "① DJI Mimo 直播里粘贴「推流」地址    ② OBS 媒体源粘贴「OBS」地址（输入格式留空）";
+            hint.ForeColor = Color.Gray;
+            hint.Font = new Font(Font.FontFamily, 8F);
+            hint.AutoSize = true;
+            hint.Location = new Point(16, 8);
+            Controls.Add(hint);
 
-            Controls.Add(MkLabel("OBS 接收地址（媒体源 → 输入）：", 16, 78));
-            SetupBox(_txtPull, 16, 102);
-            Controls.Add(_txtPull);
-            Controls.Add(MkButton("复制", 394, 101, delegate { Copy(PullUrl()); }));
+            for (int i = 0; i < CamCount; i++)
+            {
+                int cam = i;
+                int y = 34 + i * 64;
+                int n = i + 1;
 
-            _lblSvc.SetBounds(16, 144, 200, 20);
+                var lblCam = new Label();
+                lblCam.Text = "机位" + n + " · camera" + n;
+                lblCam.Font = new Font(Font, FontStyle.Bold);
+                lblCam.AutoSize = true;
+                lblCam.Location = new Point(16, y);
+                Controls.Add(lblCam);
+
+                _camStat[i] = new Label();
+                _camStat[i].SetBounds(290, y, 204, 17);
+                _camStat[i].TextAlign = ContentAlignment.MiddleRight;
+                _camStat[i].Text = "— 未使用";
+                _camStat[i].ForeColor = Color.Gray;
+                Controls.Add(_camStat[i]);
+
+                _camPush[i] = new TextBox();
+                _camPush[i].SetBounds(16, y + 22, 282, 23);
+                _camPush[i].ReadOnly = true;
+                _camPush[i].BackColor = Color.White;
+                Controls.Add(_camPush[i]);
+
+                Controls.Add(MkButton("复制推流", 306, y + 21, delegate { Copy(PushUrl(cam)); }, 88, 24));
+                Controls.Add(MkButton("复制OBS", 400, y + 21, delegate { Copy(PullUrl(cam)); }, 94, 24));
+            }
+
+            _tip.SetToolTip(_camPush[0], "填进 DJI Mimo → 直播 → RTMP");
+
+            _lblSvc.SetBounds(16, 226, 300, 18);
             _lblSvc.Text = "服务状态：—";
-            _lblStream.SetBounds(224, 144, 270, 20);
-            _lblStream.Text = "流状态：—";
             Controls.Add(_lblSvc);
-            Controls.Add(_lblStream);
 
-            _btnToggle.SetBounds(16, 176, 200, 34);
+            _pnlDiag.SetBounds(16, 250, 478, 66);
+            _pnlDiag.BorderStyle = BorderStyle.FixedSingle;
+            _pnlDiag.BackColor = GrayBg;
+            _lblDiag.Dock = DockStyle.Fill;
+            _lblDiag.Padding = new Padding(8, 6, 8, 6);
+            _lblDiag.ForeColor = GrayFg;
+            _lblDiag.Text = "等待检测 …";
+            _pnlDiag.Controls.Add(_lblDiag);
+            _pnlDiag.Click += OnDiagClick;
+            _lblDiag.Click += OnDiagClick;
+            Controls.Add(_pnlDiag);
+
+            _btnToggle.SetBounds(16, 326, 150, 32);
             _btnToggle.Text = "启动 MediaMTX";
             _btnToggle.Click += delegate { OnToggle(); };
             Controls.Add(_btnToggle);
-            Controls.Add(MkButton("刷新地址", 228, 176, delegate { RefreshAddresses(); }, 120, 34));
+            Controls.Add(MkButton("刷新地址", 176, 326, delegate { RefreshAddresses(); RefreshStatus(); }, 100, 32));
+            Controls.Add(MkButton("打开日志", 286, 326, delegate { OpenLog(); }, 100, 32));
         }
 
         // ---------- 安装向导 ----------
@@ -155,7 +217,7 @@ namespace DjiRtmpObs
             {
                 Text = "DJI RTMP → OBS · 安装向导（1/3）";
                 _wizTitle.Text = "欢迎使用";
-                _wizBody.Text = "本工具把 DJI 运动相机的画面通过局域网无线推流到\r\n这台电脑，交给 OBS 当一个机位。\r\n\r\n使用前请确认：\r\n  · 相机与这台电脑能连到同一个 Wi-Fi（建议 5GHz）\r\n  · 电脑上已安装 OBS\r\n\r\n首次使用需要安装流媒体服务（约 28MB，一次性）。";
+                _wizBody.Text = "本工具把 DJI 运动相机的画面通过局域网无线推流到\r\n这台电脑，交给 OBS 当一个机位（最多同时 3 个机位）。\r\n\r\n使用前请确认：\r\n  · 相机与这台电脑能连到同一个 Wi-Fi（建议 5GHz）\r\n  · 电脑上已安装 OBS\r\n\r\n首次使用需要安装流媒体服务（约 28MB，一次性）。";
                 _wizBtn.Text = "开始配置";
                 _wizBtn.Click += delegate { ShowStep(2); };
             }
@@ -171,7 +233,7 @@ namespace DjiRtmpObs
             {
                 Text = "DJI RTMP → OBS · 安装向导（3/3）";
                 _wizTitle.Text = "配置完成，服务已启动";
-                _wizBody.Text = "以后每次直播：\r\n\r\n1. DJI Mimo 连接相机 → 直播 → RTMP → 粘贴推流地址\r\n2. OBS 添加「媒体源」→ 粘贴 OBS 接收地址\r\n   （输入格式留空，勾选「断开时重新连接」）\r\n3. 主窗口「流状态」变成 ● 直播中 即表示成功\r\n\r\n两个地址在主窗口可一键复制，换网络后点「刷新地址」。";
+                _wizBody.Text = "以后每次直播：\r\n\r\n1. DJI Mimo 连接相机 → 直播 → RTMP → 粘贴「推流」地址\r\n2. OBS 添加「媒体源」→ 粘贴「OBS」地址\r\n   （输入格式留空，勾选「断开时重新连接」）\r\n3. 主窗口机位状态变成 ● 直播中 即表示成功\r\n\r\n主窗口的诊断面板会在推流异常时自动提示原因与解决办法。";
                 _wizBtn.Text = "开始使用";
                 _wizBtn.Click += delegate
                 {
@@ -264,8 +326,8 @@ namespace DjiRtmpObs
             }
         }
 
-        // ponytail: 加防火墙规则必须管理员，这里触发一次 UAC；用户取消则首次绑定端口时由 Windows 弹窗兜底。
-        private void EnsureFirewallRule()
+        // ponytail: 防火墙用端口规则（不踩中文路径编码坑）；加规则必须管理员，触发一次 UAC。
+        private static bool FirewallRuleExists()
         {
             try
             {
@@ -273,17 +335,28 @@ namespace DjiRtmpObs
                 { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true });
                 string outp = check.StandardOutput.ReadToEnd();
                 check.WaitForExit();
-                if (outp.Contains(FirewallRule)) return;
+                return outp.Contains(FirewallRule);
             }
-            catch { }
+            catch { return true; }
+        }
+
+        private void EnsureFirewallRule()
+        {
             try
             {
-                // ponytail: 用端口规则而不是 program= 路径规则——不踩中文路径编码坑，exe 挪位置也不失效。
                 Process.Start(new ProcessStartInfo("netsh",
                     "advfirewall firewall add rule name=\"" + FirewallRule + "\" dir=in action=allow protocol=TCP localport=1935,9554")
                 { Verb = "runas", UseShellExecute = true });
             }
             catch { }
+        }
+
+        private void OnDiagClick(object s, EventArgs e)
+        {
+            if (!_fwMissing) return;
+            EnsureFirewallRule();
+            _fwMissing = !FirewallRuleExists();
+            RefreshStatus();
         }
 
         // ---------- 服务管理 ----------
@@ -322,10 +395,9 @@ namespace DjiRtmpObs
             if (File.Exists(MtxExe)) _btnToggle.Text = "启动 MediaMTX";
         }
 
-        // ---------- 状态与地址 ----------
+        // ---------- 地址 ----------
 
-        // ponytail: UDP connect 不发任何包，只是让系统选出对外网卡，读它的本地 IP；
-        // 多网卡选错时点「刷新地址」重取，枚举所有 NIC 属过度设计。
+        // ponytail: UDP connect 不发任何包，只是让系统选出对外网卡，读它的本地 IP。
         private static string LanIp()
         {
             try
@@ -339,19 +411,22 @@ namespace DjiRtmpObs
             catch { return "127.0.0.1"; }
         }
 
-        private static string PushUrl() { return "rtmp://" + LanIp() + ":1935/" + StreamPath; }
+        private static string PushUrl(int cam) { return "rtmp://" + LanIp() + ":1935/live/camera" + (cam + 1); }
 
-        // OBS 与 MediaMTX 同机，接收地址恒为回环地址，不随网络变化，无需刷新。
-        private static string PullUrl() { return "rtsp://127.0.0.1:9554/" + StreamPath; }
+        // OBS 与 MediaMTX 同机，接收地址恒为回环地址，不随网络变化。
+        private static string PullUrl(int cam) { return "rtsp://127.0.0.1:9554/live/camera" + (cam + 1); }
 
         private void RefreshAddresses()
         {
-            _txtPush.Text = PushUrl();
-            _txtPull.Text = PullUrl();
+            for (int i = 0; i < CamCount; i++)
+            {
+                _camPush[i].Text = PushUrl(i);
+                _tip.SetToolTip(_camPush[i], "填进 DJI Mimo → 直播 → RTMP");
+            }
         }
 
-        // ponytail: 不引 JSON 库，响应里搜路径名和 ready 标记即可判断是否在播；
-        // 仅当 MediaMTX 改版 API 字段名时需要同步改这里。
+        // ---------- 状态轮询与诊断 ----------
+
         private void RefreshStatus()
         {
             if (_mtx != null && _mtx.HasExited)
@@ -372,20 +447,135 @@ namespace DjiRtmpObs
                         using (var sr = new StreamReader(resp.GetResponseStream()))
                             body = sr.ReadToEnd();
                     }
-                    catch { SetStatus(false, false); return; }
-                    SetStatus(true, body.Contains("camera1") && body.Contains("\"ready\":true"));
+                    catch { body = null; }
+                    try { BeginInvoke(new Action(delegate { RenderStatus(body); })); } catch { }
                 }, null);
             }
             catch { }
         }
 
-        private void SetStatus(bool svcUp, bool live)
+        // ponytail: 不引 JSON 库，用字符串/正则解析 API 返回；MediaMTX 改字段名时再同步。
+        private static List<string> PathNames(string body)
         {
-            if (InvokeRequired) { BeginInvoke(new Action(delegate { SetStatus(svcUp, live); })); return; }
+            var list = new List<string>();
+            foreach (Match m in Regex.Matches(body, "\"name\":\"([^\"]+)\""))
+                list.Add(m.Groups[1].Value);
+            return list;
+        }
+
+        private static string PathSegment(string body, string pathName)
+        {
+            int idx = body.IndexOf("\"name\":\"" + pathName + "\"");
+            if (idx < 0) return null;
+            string rest = body.Substring(idx);
+            int next = rest.IndexOf("\"name\":", 8);
+            return next < 0 ? rest : rest.Substring(0, next);
+        }
+
+        private void RenderStatus(string body)
+        {
+            bool svcUp = body != null;
             _lblSvc.Text = svcUp ? "服务状态：运行中" : "服务状态：未运行";
-            _lblSvc.ForeColor = svcUp ? Color.FromArgb(15, 110, 86) : Color.FromArgb(163, 45, 45);
-            _lblStream.Text = live ? "流状态：● 直播中" : (svcUp ? "流状态：等待推流" : "流状态：—");
-            _lblStream.ForeColor = live ? Color.FromArgb(15, 110, 86) : Color.Gray;
+            _lblSvc.ForeColor = svcUp ? Green : Red;
+
+            var names = svcUp ? PathNames(body) : new List<string>();
+            int firstObsMissing = -1, firstInterrupted = -1;
+            bool anyLive = false;
+            var liveList = new List<string>();
+            string liveRate = "";
+
+            for (int i = 0; i < CamCount; i++)
+            {
+                string pathName = "live/camera" + (i + 1);
+                string seg = svcUp ? PathSegment(body, pathName) : null;
+                bool publishing = seg != null && seg.Contains("\"ready\":true");
+                bool hasReaders = publishing && seg.Contains("\"readers\":[{");
+
+                long bytes = 0;
+                if (publishing)
+                {
+                    var mb = Regex.Match(seg, "\"bytesReceived\":(\\d+)");
+                    if (mb.Success) bytes = long.Parse(mb.Groups[1].Value);
+                }
+                double mbps = (publishing && _prevBytes[i] > 0 && bytes > _prevBytes[i])
+                    ? (bytes - _prevBytes[i]) * 8.0 / 3.0 / 1000000.0 : 0;
+                _prevBytes[i] = bytes;
+
+                string st;
+                Color sc;
+                if (publishing && hasReaders) { st = "● 直播中"; sc = Green; }
+                else if (publishing) { st = "● 已推流 · OBS 未拉"; sc = Orange; if (firstObsMissing < 0) firstObsMissing = i; }
+                else if (_everPublished[i]) { st = "○ 已断流"; sc = Orange; if (firstInterrupted < 0) firstInterrupted = i; }
+                else { st = "— 未使用"; sc = Color.Gray; }
+
+                if (publishing && mbps > 0) st += " · " + mbps.ToString("0.0") + " Mbps";
+                _camStat[i].Text = st;
+                _camStat[i].ForeColor = sc;
+
+                if (publishing) _everPublished[i] = true;
+                if (publishing && hasReaders)
+                {
+                    anyLive = true;
+                    liveList.Add("机位" + (i + 1));
+                    if (mbps > 0) liveRate = " · " + mbps.ToString("0.0") + " Mbps";
+                }
+
+                bool liveNow = publishing && hasReaders;
+                if (_polled && liveNow != _prevLive[i])
+                    _tray.ShowBalloonTip(2000, "DJI RTMP → OBS", "机位" + (i + 1) + (liveNow ? " 开始直播" : " 推流中断"), ToolTipIcon.Info);
+                _prevLive[i] = liveNow;
+            }
+            _polled = true;
+
+            string unexpected = null;
+            foreach (var n in names)
+            {
+                if (n != "live/camera1" && n != "live/camera2" && n != "live/camera3") { unexpected = n; break; }
+            }
+
+            string diag;
+            Color bg, fg;
+            if (!svcUp)
+            {
+                diag = "服务未运行：点下方「启动 MediaMTX」。";
+                bg = GrayBg; fg = GrayFg;
+            }
+            else if (unexpected != null)
+            {
+                diag = "路径不匹配：相机正在推流到 '" + unexpected + "'，与机位路径都不一致——Mimo 里的推流地址末尾可能多了字符（比如句点）。改正 Mimo 地址；或临时把 OBS 地址改成 '" + unexpected + "' 先验证。";
+                bg = RedBg; fg = RedFg;
+            }
+            else if (firstObsMissing >= 0)
+            {
+                int n = firstObsMissing + 1;
+                diag = "机位" + n + " 相机已在推流，但 OBS 未拉流：检查 OBS 媒体源地址 rtsp://127.0.0.1:9554/live/camera" + n + "（「输入格式」留空、勾选「断开时重新连接」）。";
+                bg = YellowBg; fg = YellowFg;
+            }
+            else if (firstInterrupted >= 0)
+            {
+                diag = "机位" + (firstInterrupted + 1) + " 推流中断：等待相机重连，OBS 会自动恢复。";
+                bg = YellowBg; fg = YellowFg;
+            }
+            else if (_fwMissing)
+            {
+                diag = "防火墙规则缺失，相机可能连不上这台电脑。点击此面板一键修复（需授权一次）。";
+                bg = YellowBg; fg = YellowFg;
+            }
+            else if (anyLive)
+            {
+                diag = "✓ " + string.Join("、", liveList.ToArray()) + " 直播中，画面正在进入 OBS。" + liveRate;
+                bg = GreenBg; fg = GreenFg;
+            }
+            else
+            {
+                diag = "等待推流：在 DJI Mimo 中点「开始直播」。若 Mimo 报「检查网络」，确认相机与本机在同一 Wi-Fi。";
+                bg = GrayBg; fg = GrayFg;
+            }
+
+            _pnlDiag.BackColor = bg;
+            _lblDiag.Text = diag;
+            _lblDiag.ForeColor = fg;
+            _pnlDiag.Cursor = (_fwMissing && svcUp) ? Cursors.Hand : Cursors.Default;
         }
 
         private void Copy(string text)
@@ -398,6 +588,13 @@ namespace DjiRtmpObs
             catch { }
         }
 
+        private void OpenLog()
+        {
+            string log = Path.Combine(MtxDir, "mediamtx.log");
+            if (File.Exists(log)) Process.Start("notepad.exe", log);
+            else MessageBox.Show("还没有日志文件（服务启动后生成）。", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
         // ---------- 窗口与托盘 ----------
 
         private void OnLoad()
@@ -407,7 +604,11 @@ namespace DjiRtmpObs
             {
                 StartMtx();
                 // 自检：规则缺失时才会弹 UAC，存在则静默跳过（覆盖"未走向导"的老用户）
-                EnsureFirewallRule();
+                if (!FirewallRuleExists())
+                {
+                    EnsureFirewallRule();
+                    _fwMissing = !FirewallRuleExists();
+                }
             }
         }
 
@@ -456,17 +657,6 @@ namespace DjiRtmpObs
             catch { }
         }
 
-        private static Label MkLabel(string text, int x, int y)
-        {
-            var l = new Label();
-            l.Text = text;
-            l.AutoSize = true;
-            l.Location = new Point(x, y);
-            return l;
-        }
-
-        private static Button MkButton(string text, int x, int y, EventHandler fn) { return MkButton(text, x, y, fn, 100, 25); }
-
         private static Button MkButton(string text, int x, int y, EventHandler fn, int w, int h)
         {
             var b = new Button();
@@ -474,13 +664,6 @@ namespace DjiRtmpObs
             b.SetBounds(x, y, w, h);
             b.Click += fn;
             return b;
-        }
-
-        private static void SetupBox(TextBox t, int x, int y)
-        {
-            t.SetBounds(x, y, 370, 23);
-            t.ReadOnly = true;
-            t.BackColor = Color.White;
         }
 
         private static void TryDelete(string p) { try { if (File.Exists(p)) File.Delete(p); } catch { } }

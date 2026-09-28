@@ -1,0 +1,23 @@
+# DJI-RTMP-OBS-Windows — MediaMTX 精简配置
+# 相机把 H.265 RTMP 推到 1935，OBS 从 8554 以 RTSP 拉流；其余协议全部关闭省资源。
+logLevel: info
+logDestinations: [stdout, file]
+logFile: mediamtx.log
+
+api: yes
+apiAddress: :9997
+
+hls: no
+webrtc: no
+metrics: no
+pprof: no
+
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp]
+
+rtmp: yes
+rtmpAddress: :1935
+
+# 注意：未启用鉴权，仅适用于可信局域网。
+# paths 缺省配置即允许任意路径发布/读取（如 live/camera1）。

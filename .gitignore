@@ -1,0 +1,5 @@
+mediamtx/
+*.zip
+*.exe
+*.log
+.vs/

@@ -20,9 +20,19 @@ namespace DjiRtmpObs
 {
     internal static class Program
     {
+        private static System.Threading.Mutex _single;
+
         [STAThread]
         private static void Main()
         {
+            bool first;
+            _single = new System.Threading.Mutex(true, "DJI-RTMP-OBS-Windows", out first);
+            if (!first)
+            {
+                MessageBox.Show("程序已经在运行了（见右下角托盘图标）。", "DJI RTMP → OBS",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new AppForm());

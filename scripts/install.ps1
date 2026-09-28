@@ -16,7 +16,13 @@ if (Test-Path $exe) {
     Write-Host "mediamtx.exe already present, skip download."
 } else {
     Write-Host "Downloading MediaMTX $ver ..."
-    Invoke-WebRequest "$base/$file" -OutFile $zip
+    # github release downloads are flaky on some networks; retry a few times before giving up.
+    $ok = $false
+    foreach ($i in 1..5) {
+        try { Invoke-WebRequest "$base/$file" -OutFile $zip; $ok = $true; break }
+        catch { Write-Host "download attempt $i failed: $($_.Exception.Message)" }
+    }
+    if (-not $ok) { throw "download failed after 5 attempts; enable your proxy/accelerator and retry" }
     Invoke-WebRequest "$base/checksums.sha256" -OutFile (Join-Path $root 'checksums.sha256')
 
     $expect = (Select-String -Path (Join-Path $root 'checksums.sha256') -SimpleMatch $file).Line.Split(' ')[0].ToLower()

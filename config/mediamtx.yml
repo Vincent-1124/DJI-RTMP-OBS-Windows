@@ -9,12 +9,14 @@ apiAddress: :9997
 
 hls: no
 webrtc: no
+srt: no
+moq: no
 metrics: no
 pprof: no
 
 rtsp: yes
-rtspAddress: :8554
-protocols: [tcp]
+rtspAddress: :9554
+rtspTransports: [tcp]
 
 rtmp: yes
 rtmpAddress: :1935

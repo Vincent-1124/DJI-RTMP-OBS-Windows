@@ -90,7 +90,7 @@ namespace DjiRtmpObs
         private static string PushUrl() { return "rtmp://" + LanIp() + ":1935/" + StreamPath; }
 
         // OBS 与 MediaMTX 同机，接收地址恒为回环地址，不随网络变化，无需刷新。
-        private static string PullUrl() { return "rtsp://127.0.0.1:8554/" + StreamPath; }
+        private static string PullUrl() { return "rtsp://127.0.0.1:9554/" + StreamPath; }
 
         private void RefreshAddresses()
         {

@@ -278,8 +278,9 @@ namespace DjiRtmpObs
             catch { }
             try
             {
+                // ponytail: 用端口规则而不是 program= 路径规则——不踩中文路径编码坑，exe 挪位置也不失效。
                 Process.Start(new ProcessStartInfo("netsh",
-                    "advfirewall firewall add rule name=\"" + FirewallRule + "\" dir=in action=allow program=\"" + MtxExe + "\"")
+                    "advfirewall firewall add rule name=\"" + FirewallRule + "\" dir=in action=allow protocol=TCP localport=1935,9554")
                 { Verb = "runas", UseShellExecute = true });
             }
             catch { }
@@ -402,7 +403,12 @@ namespace DjiRtmpObs
         private void OnLoad()
         {
             RefreshAddresses();
-            if (File.Exists(MtxExe)) StartMtx();
+            if (File.Exists(MtxExe))
+            {
+                StartMtx();
+                // 自检：规则缺失时才会弹 UAC，存在则静默跳过（覆盖"未走向导"的老用户）
+                EnsureFirewallRule();
+            }
         }
 
         private void OnClosing(object s, FormClosingEventArgs e)

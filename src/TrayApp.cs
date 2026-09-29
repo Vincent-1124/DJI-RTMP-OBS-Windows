@@ -103,7 +103,7 @@ namespace DjiRtmpObs
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
-            ClientSize = new Size(520, 372);
+            ClientSize = new Size(520, 392);
             Font = new Font("Microsoft YaHei UI", 9F);
 
             EnsureConfig();
@@ -174,7 +174,7 @@ namespace DjiRtmpObs
             _lblSvc.Text = "服务状态：—";
             Controls.Add(_lblSvc);
 
-            _pnlDiag.SetBounds(16, 250, 478, 66);
+            _pnlDiag.SetBounds(16, 250, 478, 80);
             _pnlDiag.BorderStyle = BorderStyle.FixedSingle;
             _pnlDiag.BackColor = GrayBg;
             _lblDiag.Dock = DockStyle.Fill;
@@ -186,29 +186,31 @@ namespace DjiRtmpObs
             _lblDiag.Click += OnDiagClick;
             Controls.Add(_pnlDiag);
 
-            _btnToggle.SetBounds(16, 326, 150, 32);
+            _btnToggle.SetBounds(16, 344, 150, 32);
             _btnToggle.Text = "启动 MediaMTX";
             _btnToggle.Click += delegate { OnToggle(); };
             Controls.Add(_btnToggle);
-            Controls.Add(MkButton("刷新地址", 176, 326, delegate { RefreshAddresses(); RefreshStatus(); }, 100, 32));
-            Controls.Add(MkButton("打开日志", 286, 326, delegate { OpenLog(); }, 100, 32));
+            Controls.Add(MkButton("刷新地址", 176, 344, delegate { RefreshAddresses(); RefreshStatus(); }, 100, 32));
+            Controls.Add(MkButton("打开日志", 286, 344, delegate { OpenLog(); }, 100, 32));
         }
 
         // ---------- 安装向导 ----------
 
         private void BuildWizard()
         {
+            // 向导期间放大窗口，给正文留足高度，否则长段落会被裁掉
+            ClientSize = new Size(560, 480);
             _wizard = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
             _wizTitle = new Label { AutoSize = false, Font = new Font(Font.FontFamily, 12F, FontStyle.Bold) };
-            _wizTitle.SetBounds(24, 24, 460, 28);
+            _wizTitle.SetBounds(28, 24, 504, 32);
             _wizBody = new Label { AutoSize = false };
-            _wizBody.SetBounds(24, 64, 460, 130);
+            _wizBody.SetBounds(28, 66, 504, 240);
             _wizBar = new ProgressBar();
-            _wizBar.SetBounds(24, 200, 460, 14);
+            _wizBar.SetBounds(28, 320, 504, 14);
             _wizStatus = new Label { AutoSize = false, ForeColor = Color.Gray };
-            _wizStatus.SetBounds(24, 222, 460, 36);
+            _wizStatus.SetBounds(28, 340, 504, 42);
             _wizBtn = new Button();
-            _wizBtn.SetBounds(24, 262, 160, 30);
+            _wizBtn.SetBounds(28, 412, 170, 32);
             _wizard.Controls.Add(_wizTitle);
             _wizard.Controls.Add(_wizBody);
             _wizard.Controls.Add(_wizBar);
@@ -252,6 +254,7 @@ namespace DjiRtmpObs
                     _wizard.Dispose();
                     _wizard = null;
                     Text = "DJI RTMP → OBS";
+                    ClientSize = new Size(520, 392);   // 向导结束，缩回主窗口尺寸
                     RefreshAddresses();
                 };
             }

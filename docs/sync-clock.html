@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>OBS 同步校准时钟</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;
+            font-family:Consolas,"Cascadia Mono",ui-monospace,monospace}
+  #wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  #clock{font-size:19vw;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  #sub{margin-top:2vh;font-size:2.2vw;opacity:.65}
+  #tick{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none}
+  .flash{animation:fl .12s linear}
+  @keyframes fl{from{opacity:.9}to{opacity:0}}
+  #hint{position:fixed;left:0;right:0;bottom:1.6vh;text-align:center;font-size:1.5vh;opacity:.4}
+  #snd{position:fixed;left:1vh;top:1vh;font-size:1.5vh;opacity:.4}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="clock">00:00.000</div>
+  <div id="sub">每秒闪白一次 —— 用于测量各机位 / 麦克风的延迟差</div>
+</div>
+<div id="tick"></div>
+<div id="snd">滴答声: 关</div>
+<div id="hint">空格 = 手动打板闪白 ｜ S = 滴答声开关 ｜ F = 全屏 ｜ 用法见 docs/OBS多设备同步指南.md</div>
+
+<script>
+(function () {
+  var clock = document.getElementById('clock');
+  var tick  = document.getElementById('tick');
+  var sndEl = document.getElementById('snd');
+  var t0 = performance.now();
+  var lastSec = -1;
+  var sound = false;
+  var ac = null;
+
+  function pad(n, w) {
+    var s = String(n);
+    while (s.length < w) { s = '0' + s; }
+    return s;
+  }
+
+  function flash() {
+    tick.classList.remove('flash');
+    void tick.offsetWidth;
+    tick.classList.add('flash');
+  }
+
+  function click() {
+    if (!sound) { return; }
+    try {
+      if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)(); }
+      if (ac.state === 'suspended') { ac.resume(); }
+      var o = ac.createOscillator();
+      var g = ac.createGain();
+      o.type = 'square';
+      o.frequency.value = 1600;
+      g.gain.value = 0.28;
+      o.connect(g);
+      g.connect(ac.destination);
+      var t = ac.currentTime;
+      o.start(t);
+      o.stop(t + 0.025);
+    } catch (e) { /* 忽略音频错误 */ }
+  }
+
+  function loop() {
+    var ms = performance.now() - t0;
+    var total = Math.floor(ms);
+    var m = Math.floor(total / 60000);
+    var s = Math.floor(total / 1000) % 60;
+    var f = total % 1000;
+    clock.textContent = pad(m, 2) + ':' + pad(s, 2) + '.' + pad(f, 3);
+
+    var sec = Math.floor(ms / 1000);
+    if (sec !== lastSec) {
+      lastSec = sec;
+      flash();
+      click();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      flash();
+      click();
+    } else if (e.key === 's' || e.key === 'S') {
+      sound = !sound;
+      sndEl.textContent = '滴答声: ' + (sound ? '开' : '关');
+      if (sound) { click(); }
+    } else if (e.key === 'f' || e.key === 'F') {
+      if (document.fullscreenElement) { document.exitFullscreen(); }
+      else { document.documentElement.requestFullscreen(); }
+    }
+  });
+
+  document.addEventListener('click', function () { flash(); click(); });
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
